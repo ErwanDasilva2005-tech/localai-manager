@@ -12,6 +12,12 @@ export default function Dashboard() {
   const [name, setName] = useState('');
   const [provider, setProvider] = useState('');
 
+  // Editing state
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editProvider, setEditProvider] = useState('');
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
   async function fetchModels() {
     setLoading(true);
     setError(null);
@@ -52,6 +58,51 @@ export default function Dashboard() {
       setError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  function startEdit(model: LocalModel) {
+    setEditingId(model.id);
+    setEditName(model.name);
+    setEditProvider(model.provider);
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    setEditName('');
+    setEditProvider('');
+  }
+
+  async function handleUpdate(id: string) {
+    if (!editName.trim() || !editProvider.trim()) return;
+
+    setError(null);
+    try {
+      const res = await fetch(`/api/models/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: editName, provider: editProvider, config: {} }),
+      });
+      if (!res.ok) throw new Error('Failed to update model');
+
+      cancelEdit();
+      await fetchModels();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error');
+    }
+  }
+
+  async function handleDelete(id: string) {
+    setDeletingId(id);
+    setError(null);
+    try {
+      const res = await fetch(`/api/models/${id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error('Failed to delete model');
+      await fetchModels();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error');
+    } finally {
+      setDeletingId(null);
     }
   }
 
@@ -118,15 +169,65 @@ export default function Dashboard() {
             {models.map((model) => (
               <li
                 key={model.id}
-                className="flex items-center justify-between rounded-lg border border-gray-200 bg-white px-4 py-3"
+                className="rounded-lg border border-gray-200 bg-white px-4 py-3"
               >
-                <div>
-                  <p className="font-medium text-gray-900">{model.name}</p>
-                  <p className="text-sm text-gray-500">{model.provider}</p>
-                </div>
-                <span className="text-xs text-gray-400">
-                  {new Date(model.created_at).toLocaleDateString()}
-                </span>
+                {editingId === model.id ? (
+                  // Edit mode
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                    <input
+                      type="text"
+                      value={editName}
+                      onChange={(e) => setEditName(e.target.value)}
+                      className="flex-1 rounded-md border border-gray-300 px-2 py-1 text-sm focus:border-gray-500 focus:outline-none"
+                    />
+                    <input
+                      type="text"
+                      value={editProvider}
+                      onChange={(e) => setEditProvider(e.target.value)}
+                      className="flex-1 rounded-md border border-gray-300 px-2 py-1 text-sm focus:border-gray-500 focus:outline-none"
+                    />
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => handleUpdate(model.id)}
+                        className="rounded-md bg-gray-900 px-3 py-1 text-sm font-medium text-white hover:bg-gray-800"
+                      >
+                        Save
+                      </button>
+                      <button
+                        onClick={cancelEdit}
+                        className="rounded-md border border-gray-300 px-3 py-1 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  // View mode
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="font-medium text-gray-900">{model.name}</p>
+                      <p className="text-sm text-gray-500">{model.provider}</p>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className="text-xs text-gray-400">
+                        {new Date(model.created_at).toLocaleDateString()}
+                      </span>
+                      <button
+                        onClick={() => startEdit(model)}
+                        className="text-sm font-medium text-gray-600 hover:text-gray-900"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => handleDelete(model.id)}
+                        disabled={deletingId === model.id}
+                        className="text-sm font-medium text-red-600 hover:text-red-800 disabled:opacity-50"
+                      >
+                        {deletingId === model.id ? 'Deleting...' : 'Delete'}
+                      </button>
+                    </div>
+                  </div>
+                )}
               </li>
             ))}
           </ul>
