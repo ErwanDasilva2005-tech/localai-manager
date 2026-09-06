@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState,useRef } from 'react';
 import type { LocalModel } from '@/types';
+import { testOllamaModel } from '@/lib/ollama';
 
 export default function Dashboard() {
   const [models, setModels] = useState<LocalModel[]>([]);
@@ -12,11 +13,20 @@ export default function Dashboard() {
   const [name, setName] = useState('');
   const [provider, setProvider] = useState('');
 
+
+
   // Editing state
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [editProvider, setEditProvider] = useState('');
   const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const [testingId, setTestingId] = useState<string | null>(null);
+  const [testPrompt, setTestPrompt] = useState('Write a 1-sentence motivation letter.');
+  const [testOutput, setTestOutput] = useState('');
+  const [testError, setTestError] = useState<string | null>(null);
+  const [testRunning, setTestRunning] = useState(false);
+  const abortRef = useRef<AbortController | null>(null);
 
   async function fetchModels() {
     setLoading(true);
@@ -105,6 +115,41 @@ export default function Dashboard() {
       setDeletingId(null);
     }
   }
+
+  function openTest(id: string) {
+  setTestingId(id);
+  setTestOutput('');
+  setTestError(null);
+}
+
+function closeTest() {
+  abortRef.current?.abort();
+  setTestingId(null);
+  setTestOutput('');
+  setTestError(null);
+  setTestRunning(false);
+}
+
+async function runTest(modelName: string) {
+  setTestRunning(true);
+  setTestOutput('');
+  setTestError(null);
+
+  const controller = new AbortController();
+  abortRef.current = controller;
+
+  const result = await testOllamaModel(
+    modelName,
+    testPrompt,
+    (partial) => setTestOutput(partial),
+    controller.signal
+  );
+
+  if (!result.success && result.error !== 'Request cancelled') {
+    setTestError(result.error ?? 'Something went wrong');
+  }
+  setTestRunning(false);
+}
 
   return (
     <main className="min-h-screen bg-gray-50 px-6 py-10">
@@ -225,7 +270,52 @@ export default function Dashboard() {
                       >
                         {deletingId === model.id ? 'Deleting...' : 'Delete'}
                       </button>
+                      <button
+                       onClick={() => openTest(model.id)}
+                       className="text-sm font-medium text-blue-600 hover:text-blue-800"
+                        >
+                         Test
+                        </button>
                     </div>
+                  </div>
+                  
+                )}
+                                {testingId === model.id && (
+                  <div className="mt-3 rounded-md border border-gray-200 bg-gray-50 p-3">
+                    <textarea
+                      value={testPrompt}
+                      onChange={(e) => setTestPrompt(e.target.value)}
+                      rows={2}
+                      className="w-full rounded-md border border-gray-300 px-2 py-1 text-sm focus:border-gray-500 focus:outline-none"
+                      placeholder="Enter a prompt..."
+                    />
+                    <div className="mt-2 flex gap-2">
+                      <button
+                        onClick={() => runTest(model.name)}
+                        disabled={testRunning}
+                        className="rounded-md bg-blue-600 px-3 py-1 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                      >
+                        {testRunning ? 'Generating...' : 'Send Prompt'}
+                      </button>
+                      <button
+                        onClick={closeTest}
+                        className="rounded-md border border-gray-300 px-3 py-1 text-sm font-medium text-gray-700 hover:bg-white"
+                      >
+                        Close
+                      </button>
+                    </div>
+
+                    {testError && (
+                      <p className="mt-2 rounded-md bg-red-50 px-2 py-1 text-sm text-red-700">
+                        {testError}
+                      </p>
+                    )}
+
+                    {testOutput && (
+                      <p className="mt-2 whitespace-pre-wrap rounded-md bg-white p-2 text-sm text-gray-800">
+                        {testOutput}
+                      </p>
+                    )}
                   </div>
                 )}
               </li>
