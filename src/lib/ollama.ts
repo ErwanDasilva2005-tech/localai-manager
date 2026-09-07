@@ -67,3 +67,18 @@ export async function testOllamaModel(
     };
   }
 }
+
+export async function checkOllamaHealth(): Promise<boolean> {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 2000); // 2s timeout, don't hang the UI
+
+    const res = await fetch('http://localhost:11434/api/tags', {
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    return res.ok;
+  } catch {
+    return false; // covers connection refused, timeout, CORS block — all mean "not reachable"
+  }
+}

@@ -2,7 +2,7 @@
 
 import { useEffect, useState,useRef } from 'react';
 import type { LocalModel } from '@/types';
-import { testOllamaModel } from '@/lib/ollama';
+import { testOllamaModel, checkOllamaHealth } from '@/lib/ollama';
 
 export default function Dashboard() {
   const [models, setModels] = useState<LocalModel[]>([]);
@@ -12,6 +12,8 @@ export default function Dashboard() {
 
   const [name, setName] = useState('');
   const [provider, setProvider] = useState('');
+
+  const outputRef = useRef<HTMLParagraphElement | null>(null);
 
 
 
@@ -27,6 +29,7 @@ export default function Dashboard() {
   const [testError, setTestError] = useState<string | null>(null);
   const [testRunning, setTestRunning] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  const [ollamaOnline, setOllamaOnline] = useState<boolean | null>(null); // null = checking
 
   async function fetchModels() {
     setLoading(true);
@@ -46,6 +49,16 @@ export default function Dashboard() {
   useEffect(() => {
     fetchModels();
   }, []);
+
+  useEffect(() => {
+  async function poll() {
+    const online = await checkOllamaHealth();
+    setOllamaOnline(online);
+  }
+  poll(); // check immediately on mount
+  const interval = setInterval(poll, 10000); // then every 10s
+  return () => clearInterval(interval);
+}, []);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -70,6 +83,12 @@ export default function Dashboard() {
       setSubmitting(false);
     }
   }
+
+  useEffect(() => {
+  if (outputRef.current) {
+    outputRef.current.scrollTop = outputRef.current.scrollHeight;
+  }
+}, [testOutput]);
 
   function startEdit(model: LocalModel) {
     setEditingId(model.id);
@@ -132,8 +151,10 @@ function closeTest() {
 
 async function runTest(modelName: string) {
   setTestRunning(true);
-  setTestOutput('');
   setTestError(null);
+  // Note: intentionally NOT clearing testOutput here if you want to support "regenerate" later,
+  // but for a fresh run, clear it:
+  setTestOutput('');
 
   const controller = new AbortController();
   abortRef.current = controller;
@@ -154,9 +175,29 @@ async function runTest(modelName: string) {
   return (
     <main className="min-h-screen bg-gray-50 px-6 py-10">
       <div className="mx-auto max-w-2xl">
-        <h1 className="mb-6 text-2xl font-semibold text-gray-900">
+      <div className="mb-6 flex items-center justify-between">
+        <h1 className="text-2xl font-semibold text-gray-900">
           Your Local AI Models
         </h1>
+        <div className="flex items-center gap-2 rounded-full border border-gray-200 bg-white px-3 py-1.5 text-sm">
+          <span
+            className={`h-2.5 w-2.5 rounded-full ${
+              ollamaOnline === null
+                ? 'bg-gray-300'
+                : ollamaOnline
+                ? 'bg-green-500'
+                : 'bg-red-500'
+            }`}
+          />
+          <span className="text-gray-600">
+            {ollamaOnline === null
+              ? 'Checking Ollama...'
+              : ollamaOnline
+              ? 'Ollama online'
+              : 'Ollama offline'}
+          </span>
+        </div>
+      </div>
 
         {/* Add model form */}
         <form
@@ -280,7 +321,7 @@ async function runTest(modelName: string) {
                   </div>
                   
                 )}
-                                {testingId === model.id && (
+                {testingId === model.id && (
                   <div className="mt-3 rounded-md border border-gray-200 bg-gray-50 p-3">
                     <textarea
                       value={testPrompt}
@@ -297,6 +338,16 @@ async function runTest(modelName: string) {
                       >
                         {testRunning ? 'Generating...' : 'Send Prompt'}
                       </button>
+
+                      {testRunning && (
+                        <button
+                          onClick={() => abortRef.current?.abort()}
+                          className="rounded-md bg-red-600 px-3 py-1 text-sm font-medium text-white hover:bg-red-700"
+                        >
+                          Stop
+                        </button>
+                      )}
+
                       <button
                         onClick={closeTest}
                         className="rounded-md border border-gray-300 px-3 py-1 text-sm font-medium text-gray-700 hover:bg-white"
@@ -311,8 +362,11 @@ async function runTest(modelName: string) {
                       </p>
                     )}
 
-                    {testOutput && (
-                      <p className="mt-2 whitespace-pre-wrap rounded-md bg-white p-2 text-sm text-gray-800">
+                     {testOutput && (
+                      <p
+                        ref={outputRef}
+                        className="mt-2 max-h-64 overflow-y-auto whitespace-pre-wrap rounded-md bg-white p-2 text-sm text-gray-800"
+                      >
                         {testOutput}
                       </p>
                     )}
