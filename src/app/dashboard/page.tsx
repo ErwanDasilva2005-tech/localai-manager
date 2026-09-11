@@ -3,6 +3,7 @@
 import { useEffect, useState,useRef } from 'react';
 import type { LocalModel } from '@/types';
 import { testOllamaModel, checkOllamaHealth } from '@/lib/ollama';
+import { testViaGateway } from '@/lib/gateway';
 
 export default function Dashboard() {
   const [models, setModels] = useState<LocalModel[]>([]);
@@ -151,15 +152,13 @@ function closeTest() {
 
 async function runTest(modelName: string) {
   setTestRunning(true);
-  setTestError(null);
-  // Note: intentionally NOT clearing testOutput here if you want to support "regenerate" later,
-  // but for a fresh run, clear it:
   setTestOutput('');
+  setTestError(null);
 
   const controller = new AbortController();
   abortRef.current = controller;
 
-  const result = await testOllamaModel(
+  const result = await testViaGateway(
     modelName,
     testPrompt,
     (partial) => setTestOutput(partial),

@@ -91,13 +91,20 @@ export async function POST(req: Request) {
     );
   }
 
-  if ((ollamaRes.statusCode ?? 500) >= 400) {
-    return NextResponse.json(
-      { error: `Ollama returned status ${ollamaRes.statusCode}` },
-      { status: 502, headers }
-    );
+ if ((ollamaRes.statusCode ?? 500) >= 400) {
+  // Read the actual error body Ollama sent, instead of discarding it
+  const chunks: Buffer[] = [];
+  for await (const chunk of ollamaRes) {
+    chunks.push(chunk);
   }
+  const errorBody = Buffer.concat(chunks).toString();
+  console.error('Ollama returned error status:', ollamaRes.statusCode, errorBody);
 
+  return NextResponse.json(
+    { error: `Ollama returned status ${ollamaRes.statusCode}`, details: errorBody },
+    { status: 502, headers }
+  );
+}
   // Convert Ollama's Node.js stream into a Web ReadableStream Next.js can return
   const webStream = Readable.toWeb(ollamaRes) as ReadableStream;
 
