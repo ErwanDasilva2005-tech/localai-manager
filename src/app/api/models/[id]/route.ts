@@ -1,6 +1,6 @@
 import { auth } from '@clerk/nextjs/server';
 import { NextResponse } from 'next/server';
-import { supabaseAdmin } from '@/lib/supabase-admin';
+import { createAuthenticatedSupabaseClient } from '@/lib/supabase-server';
 import type { LocalModel } from '@/types';
 
 export async function PATCH(
@@ -14,8 +14,9 @@ export async function PATCH(
 
   const { id } = await params;
   const body = await req.json();
+  const supabase = createAuthenticatedSupabaseClient();
 
-  const { data, error } = await supabaseAdmin
+  const { data, error } = await supabase
     .from('local_models')
     .update({
       name: body.name,
@@ -23,8 +24,7 @@ export async function PATCH(
       config: body.config ?? {},
       updated_at: new Date().toISOString(),
     })
-    .eq('id', id)
-    .eq('clerk_user_id', userId) // critical: prevents editing someone else's row
+    .eq('id', id) // RLS also enforces clerk_user_id match, but keeping the id filter is still required
     .select()
     .single();
 
@@ -34,7 +34,6 @@ export async function PATCH(
   if (!data) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
-
   return NextResponse.json(data as LocalModel);
 }
 
@@ -48,16 +47,12 @@ export async function DELETE(
   }
 
   const { id } = await params;
+  const supabase = createAuthenticatedSupabaseClient();
 
-  const { error } = await supabaseAdmin
-    .from('local_models')
-    .delete()
-    .eq('id', id)
-    .eq('clerk_user_id', userId); // critical: prevents deleting someone else's row
+  const { error } = await supabase.from('local_models').delete().eq('id', id);
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
-
   return NextResponse.json({ success: true });
 }
