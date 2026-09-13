@@ -36,6 +36,7 @@ export async function POST(req: Request) {
       .insert({
         clerk_user_id: userId,
         name: body.name,
+        model_tag: body.model_tag,
         provider: body.provider,
         config: body.config ?? {},
       })

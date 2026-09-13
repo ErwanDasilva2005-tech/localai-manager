@@ -13,6 +13,7 @@ export default function Dashboard() {
 
   const [name, setName] = useState('');
   const [provider, setProvider] = useState('');
+  const [modelTag, setModelTag] = useState('');
 
   const outputRef = useRef<HTMLParagraphElement | null>(null);
 
@@ -22,6 +23,7 @@ export default function Dashboard() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [editProvider, setEditProvider] = useState('');
+  const [editModelTag, setEditModelTag] = useState('');
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const [testingId, setTestingId] = useState<string | null>(null);
@@ -61,66 +63,72 @@ export default function Dashboard() {
   return () => clearInterval(interval);
 }, []);
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!name.trim() || !provider.trim()) return;
+async function handleSubmit(e: React.FormEvent) {
+  e.preventDefault();
+  if (!name.trim() || !provider.trim() || !modelTag.trim()) return;
 
-    setSubmitting(true);
-    setError(null);
-    try {
-      const res = await fetch('/api/models', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, provider, config: {} }),
-      });
-      if (!res.ok) throw new Error('Failed to create model');
+  setSubmitting(true);
+  setError(null);
+  try {
+    const res = await fetch('/api/models', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, model_tag: modelTag, provider, config: {} }),
+    });
+    if (!res.ok) throw new Error('Failed to create model');
 
-      setName('');
-      setProvider('');
-      await fetchModels();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error');
-    } finally {
-      setSubmitting(false);
-    }
+    setName('');
+    setModelTag('');
+    setProvider('');
+    await fetchModels();
+  } catch (err) {
+    setError(err instanceof Error ? err.message : 'Unknown error');
+  } finally {
+    setSubmitting(false);
   }
-
+}
   useEffect(() => {
   if (outputRef.current) {
     outputRef.current.scrollTop = outputRef.current.scrollHeight;
   }
 }, [testOutput]);
 
-  function startEdit(model: LocalModel) {
-    setEditingId(model.id);
-    setEditName(model.name);
-    setEditProvider(model.provider);
+function startEdit(model: LocalModel) {
+  setEditingId(model.id);
+  setEditName(model.name);
+  setEditModelTag(model.model_tag);
+  setEditProvider(model.provider);
+}
+function cancelEdit() {
+  setEditingId(null);
+  setEditName('');
+  setEditModelTag('');
+  setEditProvider('');
+}
+
+async function handleUpdate(id: string) {
+  if (!editName.trim() || !editProvider.trim() || !editModelTag.trim()) return;
+
+  setError(null);
+  try {
+    const res = await fetch(`/api/models/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: editName,
+        model_tag: editModelTag,
+        provider: editProvider,
+        config: {},
+      }),
+    });
+    if (!res.ok) throw new Error('Failed to update model');
+
+    cancelEdit();
+    await fetchModels();
+  } catch (err) {
+    setError(err instanceof Error ? err.message : 'Unknown error');
   }
-
-  function cancelEdit() {
-    setEditingId(null);
-    setEditName('');
-    setEditProvider('');
-  }
-
-  async function handleUpdate(id: string) {
-    if (!editName.trim() || !editProvider.trim()) return;
-
-    setError(null);
-    try {
-      const res = await fetch(`/api/models/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: editName, provider: editProvider, config: {} }),
-      });
-      if (!res.ok) throw new Error('Failed to update model');
-
-      cancelEdit();
-      await fetchModels();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error');
-    }
-  }
+}
 
   async function handleDelete(id: string) {
     setDeletingId(id);
@@ -174,29 +182,29 @@ async function runTest(modelName: string) {
   return (
     <main className="min-h-screen bg-gray-50 px-6 py-10">
       <div className="mx-auto max-w-2xl">
-      <div className="mb-6 flex items-center justify-between">
-        <h1 className="text-2xl font-semibold text-gray-900">
-          Your Local AI Models
-        </h1>
-        <div className="flex items-center gap-2 rounded-full border border-gray-200 bg-white px-3 py-1.5 text-sm">
-          <span
-            className={`h-2.5 w-2.5 rounded-full ${
-              ollamaOnline === null
-                ? 'bg-gray-300'
+        <div className="mb-6 flex items-center justify-between">
+          <h1 className="text-2xl font-semibold text-gray-900">
+            Your Local AI Models
+          </h1>
+          <div className="flex items-center gap-2 rounded-full border border-gray-200 bg-white px-3 py-1.5 text-sm">
+            <span
+              className={`h-2.5 w-2.5 rounded-full ${
+                ollamaOnline === null
+                  ? 'bg-gray-300'
+                  : ollamaOnline
+                  ? 'bg-green-500'
+                  : 'bg-red-500'
+              }`}
+            />
+            <span className="text-gray-600">
+              {ollamaOnline === null
+                ? 'Checking Ollama...'
                 : ollamaOnline
-                ? 'bg-green-500'
-                : 'bg-red-500'
-            }`}
-          />
-          <span className="text-gray-600">
-            {ollamaOnline === null
-              ? 'Checking Ollama...'
-              : ollamaOnline
-              ? 'Ollama online'
-              : 'Ollama offline'}
-          </span>
+                ? 'Ollama online'
+                : 'Ollama offline'}
+            </span>
+          </div>
         </div>
-      </div>
 
         {/* Add model form */}
         <form
@@ -211,7 +219,19 @@ async function runTest(modelName: string) {
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. Llama 3 8B"
+              placeholder="e.g. My Assistant"
+              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-gray-500 focus:outline-none"
+            />
+          </div>
+          <div className="flex-1">
+            <label className="mb-1 block text-sm font-medium text-gray-700">
+              Model Tag
+            </label>
+            <input
+              type="text"
+              value={modelTag}
+              onChange={(e) => setModelTag(e.target.value)}
+              placeholder="e.g. llama3.2:latest"
               className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-gray-500 focus:outline-none"
             />
           </div>
@@ -267,6 +287,13 @@ async function runTest(modelName: string) {
                     />
                     <input
                       type="text"
+                      value={editModelTag}
+                      onChange={(e) => setEditModelTag(e.target.value)}
+                      placeholder="Model tag"
+                      className="flex-1 rounded-md border border-gray-300 px-2 py-1 text-sm focus:border-gray-500 focus:outline-none"
+                    />
+                    <input
+                      type="text"
                       value={editProvider}
                       onChange={(e) => setEditProvider(e.target.value)}
                       className="flex-1 rounded-md border border-gray-300 px-2 py-1 text-sm focus:border-gray-500 focus:outline-none"
@@ -291,7 +318,9 @@ async function runTest(modelName: string) {
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="font-medium text-gray-900">{model.name}</p>
-                      <p className="text-sm text-gray-500">{model.provider}</p>
+                      <p className="text-sm text-gray-500">
+                        {model.provider} · {model.model_tag}
+                      </p>
                     </div>
                     <div className="flex items-center gap-3">
                       <span className="text-xs text-gray-400">
@@ -311,15 +340,15 @@ async function runTest(modelName: string) {
                         {deletingId === model.id ? 'Deleting...' : 'Delete'}
                       </button>
                       <button
-                       onClick={() => openTest(model.id)}
-                       className="text-sm font-medium text-blue-600 hover:text-blue-800"
-                        >
-                         Test
-                        </button>
+                        onClick={() => openTest(model.id)}
+                        className="text-sm font-medium text-blue-600 hover:text-blue-800"
+                      >
+                        Test
+                      </button>
                     </div>
                   </div>
-                  
                 )}
+
                 {testingId === model.id && (
                   <div className="mt-3 rounded-md border border-gray-200 bg-gray-50 p-3">
                     <textarea
@@ -331,7 +360,7 @@ async function runTest(modelName: string) {
                     />
                     <div className="mt-2 flex gap-2">
                       <button
-                        onClick={() => runTest(model.name)}
+                        onClick={() => runTest(model.model_tag)}
                         disabled={testRunning}
                         className="rounded-md bg-blue-600 px-3 py-1 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
                       >
@@ -361,7 +390,7 @@ async function runTest(modelName: string) {
                       </p>
                     )}
 
-                     {testOutput && (
+                    {testOutput && (
                       <p
                         ref={outputRef}
                         className="mt-2 max-h-64 overflow-y-auto whitespace-pre-wrap rounded-md bg-white p-2 text-sm text-gray-800"

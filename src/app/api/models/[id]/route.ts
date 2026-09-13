@@ -20,6 +20,7 @@ export async function PATCH(
     .from('local_models')
     .update({
       name: body.name,
+      model_tag: body.model_tag,
       provider: body.provider,
       config: body.config ?? {},
       updated_at: new Date().toISOString(),
