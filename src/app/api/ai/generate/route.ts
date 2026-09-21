@@ -1,4 +1,5 @@
 import { auth } from '@clerk/nextjs/server';
+import { verifyToken } from '@clerk/backend';
 import { NextResponse } from 'next/server';
 import http from 'node:http';
 import { Readable } from 'node:stream';
@@ -20,9 +21,31 @@ export async function OPTIONS(req: Request) {
   return new NextResponse(null, { status: 204, headers: corsHeaders(origin) });
 }
 
-// Calls Ollama using Node's raw http module, forcing IPv4 (family: 4).
-// This sidesteps a known Node/undici bug where fetch() can hang or fail
-// on "localhost"/"127.0.0.1" even when curl and the browser succeed instantly.
+// Resolves the calling user's ID from either:
+// 1. A same-origin Clerk session cookie (this app's own dashboard), or
+// 2. A cross-origin Bearer token (DocAI Assistant, or any future client)
+async function resolveUserId(req: Request): Promise<string | null> {
+  const authHeader = req.headers.get('authorization');
+
+  if (authHeader?.startsWith('Bearer ')) {
+    const token = authHeader.slice('Bearer '.length);
+    try {
+      const result = await verifyToken(token, {
+        secretKey: process.env.CLERK_SECRET_KEY!,
+        authorizedParties: ALLOWED_ORIGINS,
+      });
+      return result.sub; // 'sub' claim = Clerk user ID, same as auth().userId
+    } catch (err) {
+      console.error('Bearer token verification failed:', err);
+      return null;
+    }
+  }
+
+  // Fall back to cookie-based session (same-origin callers, e.g. our own dashboard)
+  const { userId } = await auth();
+  return userId;
+}
+
 function callOllama(payload: object): Promise<http.IncomingMessage> {
   return new Promise((resolve, reject) => {
     const body = JSON.stringify(payload);
@@ -32,7 +55,7 @@ function callOllama(payload: object): Promise<http.IncomingMessage> {
         port: 11434,
         path: '/api/generate',
         method: 'POST',
-        family: 4, // force IPv4, skip the IPv6-first resolution that causes the hang
+        family: 4,
         headers: {
           'Content-Type': 'application/json',
           'Content-Length': Buffer.byteLength(body),
@@ -55,7 +78,7 @@ export async function POST(req: Request) {
   const origin = req.headers.get('origin');
   const headers = corsHeaders(origin);
 
-  const { userId } = await auth();
+  const userId = await resolveUserId(req);
   if (!userId) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers });
   }
@@ -91,21 +114,19 @@ export async function POST(req: Request) {
     );
   }
 
- if ((ollamaRes.statusCode ?? 500) >= 400) {
-  // Read the actual error body Ollama sent, instead of discarding it
-  const chunks: Buffer[] = [];
-  for await (const chunk of ollamaRes) {
-    chunks.push(chunk);
+  if ((ollamaRes.statusCode ?? 500) >= 400) {
+    const chunks: Buffer[] = [];
+    for await (const chunk of ollamaRes) {
+      chunks.push(chunk);
+    }
+    const errorBody = Buffer.concat(chunks).toString();
+    console.error('Ollama returned error status:', ollamaRes.statusCode, errorBody);
+    return NextResponse.json(
+      { error: `Ollama returned status ${ollamaRes.statusCode}`, details: errorBody },
+      { status: 502, headers }
+    );
   }
-  const errorBody = Buffer.concat(chunks).toString();
-  console.error('Ollama returned error status:', ollamaRes.statusCode, errorBody);
 
-  return NextResponse.json(
-    { error: `Ollama returned status ${ollamaRes.statusCode}`, details: errorBody },
-    { status: 502, headers }
-  );
-}
-  // Convert Ollama's Node.js stream into a Web ReadableStream Next.js can return
   const webStream = Readable.toWeb(ollamaRes) as ReadableStream;
 
   if (!stream) {

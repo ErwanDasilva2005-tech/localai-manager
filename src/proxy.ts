@@ -5,6 +5,7 @@ const isPublicRoute = createRouteMatcher([
   '/sign-in(.*)',
   '/sign-up(.*)',
   '/api/webhooks(.*)',
+  '/api/ai/generate(.*)', // auth handled inside the route itself (cookie OR Bearer token)
 ]);
 
 export default clerkMiddleware(async (auth, req) => {
