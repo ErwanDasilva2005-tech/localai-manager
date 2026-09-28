@@ -1,10 +1,19 @@
 import { auth } from '@clerk/nextjs/server';
 import { verifyToken } from '@clerk/backend';
 import { NextResponse } from 'next/server';
-import http from 'node:http';
-import { Readable } from 'node:stream';
+import { generateWithOllama } from '@/lib/providers/ollama';
+import { generateWithGroq } from '@/lib/providers/groq';
 
-const ALLOWED_ORIGINS = ['http://localhost:3000', 'http://localhost:3001'];
+const ALLOWED_ORIGINS = [
+  'http://localhost:3000',
+  'http://localhost:3001',
+  process.env.NEXT_PUBLIC_APP_URL,      // LocalAI Manager's own prod URL
+  process.env.NEXT_PUBLIC_DOCAI_URL,    // DocAI Assistant's prod URL
+].filter((v): v is string => Boolean(v));
+
+// Ollama can't be reached from Vercel's serverless functions — it only
+// exists on a developer's own machine. Auto-select the working provider.
+const USE_CLOUD_PROVIDER = process.env.AI_PROVIDER === 'groq' || !!process.env.VERCEL;
 
 function corsHeaders(origin: string | null) {
   const allowedOrigin = origin && ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
@@ -17,66 +26,29 @@ function corsHeaders(origin: string | null) {
 }
 
 export async function OPTIONS(req: Request) {
-  const origin = req.headers.get('origin');
-  return new NextResponse(null, { status: 204, headers: corsHeaders(origin) });
+  return new NextResponse(null, { status: 204, headers: corsHeaders(req.headers.get('origin')) });
 }
 
-// Resolves the calling user's ID from either:
-// 1. A same-origin Clerk session cookie (this app's own dashboard), or
-// 2. A cross-origin Bearer token (DocAI Assistant, or any future client)
 async function resolveUserId(req: Request): Promise<string | null> {
   const authHeader = req.headers.get('authorization');
-
   if (authHeader?.startsWith('Bearer ')) {
-    const token = authHeader.slice('Bearer '.length);
     try {
-      const result = await verifyToken(token, {
+      const result = await verifyToken(authHeader.slice(7), {
         secretKey: process.env.CLERK_SECRET_KEY!,
         authorizedParties: ALLOWED_ORIGINS,
       });
-      return result.sub; // 'sub' claim = Clerk user ID, same as auth().userId
+      return result.sub;
     } catch (err) {
       console.error('Bearer token verification failed:', err);
       return null;
     }
   }
-
-  // Fall back to cookie-based session (same-origin callers, e.g. our own dashboard)
   const { userId } = await auth();
   return userId;
 }
 
-function callOllama(payload: object): Promise<http.IncomingMessage> {
-  return new Promise((resolve, reject) => {
-    const body = JSON.stringify(payload);
-    const req = http.request(
-      {
-        hostname: '127.0.0.1',
-        port: 11434,
-        path: '/api/generate',
-        method: 'POST',
-        family: 4,
-        headers: {
-          'Content-Type': 'application/json',
-          'Content-Length': Buffer.byteLength(body),
-        },
-        timeout: 30000,
-      },
-      (res) => resolve(res)
-    );
-
-    req.on('timeout', () => {
-      req.destroy(new Error('TIMEOUT'));
-    });
-    req.on('error', reject);
-    req.write(body);
-    req.end();
-  });
-}
-
 export async function POST(req: Request) {
-  const origin = req.headers.get('origin');
-  const headers = corsHeaders(origin);
+  const headers = corsHeaders(req.headers.get('origin'));
 
   const userId = await resolveUserId(req);
   if (!userId) {
@@ -92,70 +64,27 @@ export async function POST(req: Request) {
 
   const { model, prompt, system, stream = true } = body;
   if (!model || !prompt) {
-    return NextResponse.json(
-      { error: 'Both "model" and "prompt" are required' },
-      { status: 400, headers }
-    );
+    return NextResponse.json({ error: 'Both "model" and "prompt" are required' }, { status: 400, headers });
   }
 
-  let ollamaRes: http.IncomingMessage;
-  try {
-    ollamaRes = await callOllama({ model, prompt, system, stream });
-  } catch (err) {
-    console.error('Gateway → Ollama connection failed:', err);
-    const isTimeout = err instanceof Error && err.message === 'TIMEOUT';
-    return NextResponse.json(
-      {
-        error: isTimeout
-          ? 'Ollama took too long to respond (model may be loading — try again)'
-          : 'Could not reach Ollama — is it running?',
-      },
-      { status: 502, headers }
-    );
-  }
+  const result = USE_CLOUD_PROVIDER
+    ? await generateWithGroq({ model, prompt, system, stream })
+    : await generateWithOllama({ model, prompt, system, stream });
 
-  if ((ollamaRes.statusCode ?? 500) >= 400) {
-    const chunks: Buffer[] = [];
-    for await (const chunk of ollamaRes) {
-      chunks.push(chunk);
-    }
-    const errorBody = Buffer.concat(chunks).toString();
-    console.error('Ollama returned error status:', ollamaRes.statusCode, errorBody);
-    return NextResponse.json(
-      { error: `Ollama returned status ${ollamaRes.statusCode}`, details: errorBody },
-      { status: 502, headers }
-    );
+  if (result.error) {
+    console.error(`Provider error (${USE_CLOUD_PROVIDER ? 'groq' : 'ollama'}):`, result.error);
+    return NextResponse.json({ error: result.error, provider: USE_CLOUD_PROVIDER ? 'groq' : 'ollama' }, {
+      status: result.statusCode,
+      headers,
+    });
   }
-
-  const webStream = Readable.toWeb(ollamaRes) as ReadableStream;
 
   if (!stream) {
-    const reader = webStream.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    let fullResponse = '';
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-    }
-    for (const line of buffer.split('\n').filter(Boolean)) {
-      try {
-        const parsed = JSON.parse(line);
-        if (parsed.response) fullResponse += parsed.response;
-      } catch {
-        // skip malformed line
-      }
-    }
-    return NextResponse.json({ response: fullResponse }, { headers });
+    return NextResponse.json({ response: result.fullResponse }, { headers });
   }
 
-  return new Response(webStream, {
+  return new Response(result.stream, {
     status: 200,
-    headers: {
-      ...headers,
-      'Content-Type': 'application/x-ndjson',
-      'Cache-Control': 'no-cache',
-    },
+    headers: { ...headers, 'Content-Type': 'application/x-ndjson', 'Cache-Control': 'no-cache' },
   });
 }
