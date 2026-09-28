@@ -1,8 +1,7 @@
 import type { GenerateRequest, ProviderResult } from './types';
 
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
-const GROQ_MODEL = 'llama-3.3-70b-versatile'; // solid default; swap freely
-
+const GROQ_MODEL = process.env.GROQ_MODEL ?? 'openai/gpt-oss-20b';
 export async function generateWithGroq(req: GenerateRequest): Promise<ProviderResult> {
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) {
